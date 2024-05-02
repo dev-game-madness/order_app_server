@@ -32,14 +32,14 @@ class UsersRegistration(Resource):
                     cursor.execute(f"INSERT INTO users (email, password) VALUES ('{user_email}', {user_password})")
                     conn.commit()
                     cursor.close()
-                    return make_response({"OK": "Пользователь создан"}, 201)
+                    return make_response({"reg_OK": "Пользователь создан"}, 201)
                 except Exception as e:
-                    return make_response({"create_error": str(e)}, 400)
+                    return make_response({"reg_error": str(e)}, 400)
             else:
                 if user_email == email_db[0]:
-                    return make_response({"error": "Пользователь с этим Email уже существует"}, 409)
+                    return make_response({"reg_error": "Пользователь с этим Email уже существует"}, 409)
                 else:
-                    return make_response({"validate_error": "Необработанная ошибка"}, 400)
+                    return make_response({"reg_error": "Необработанная ошибка"}, 400)
         except Exception as e:
             return make_response({"validate_error": str(e)}, 400)
 
@@ -56,12 +56,18 @@ class UsersLogin(Resource):
 
         try:
             cursor = conn.cursor()
-            cursor.execute(f"SELECT password FROM users WHERE email = '{user_email}' AND password = '{user_password}'")
-            password_db = cursor.fetchone()
-            print(password_db)
+            cursor.execute(f"SELECT email, password FROM users WHERE email = '{user_email}'")
+            user_db = cursor.fetchone()
             cursor.close()
+            if user_db is None:
+                return make_response({"login_error": "Пользователя с таким Email не существует"}, 409)
+            else:
+                if user_password == user_db[1]:
+                    return make_response({"login_OK": "Пользователь успешно вошел"}, 200)
+                else:
+                    return make_response({"login_error": "Неверный логин или пароль"}, 401)
         except Exception as e:
-            return make_response({"error": str(e)}, 400)
+            return make_response({"login_error": str(e)}, 400)
 
 
 api.add_resource(UsersRegistration, "/api/v1/users/reg")
