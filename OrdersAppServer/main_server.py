@@ -1,13 +1,15 @@
-from flask import Flask, make_response
+from flask import Flask, make_response, request
 from flask_restful import Resource, Api, reqparse
 import psycopg2 as pgdb
+import jwt
+import datetime
 
 conn = pgdb.connect(dbname="orders_app", host="localhost", user="postgres", password="88f5XX7", port="5432")
 
-# "http://127.0.0.1:5000/api/v1/users"
-
 app = Flask(__name__)
 api = Api()
+
+secret_key = "ORDERS_APP_TOKEN_KEY"
 
 
 class UsersRegistration(Resource):
@@ -29,19 +31,20 @@ class UsersRegistration(Resource):
             if email_db is None:
                 try:
                     cursor = conn.cursor()
-                    cursor.execute(f"INSERT INTO users (email, password) VALUES ('{user_email}', {user_password})")
+                    cursor.execute(
+                        f"INSERT INTO users (email, password, fullreg, reg_date) VALUES ('{user_email}', {user_password}, False, NOW())")
                     conn.commit()
                     cursor.close()
-                    return make_response({"reg_OK": "Пользователь создан"}, 201)
+                    return make_response({"OK": "Пользователь создан"}, 201)
                 except Exception as e:
-                    return make_response({"reg_error": str(e)}, 400)
+                    return make_response({"error": str(e)}, 400)
             else:
                 if user_email == email_db[0]:
-                    return make_response({"reg_error": "Пользователь с этим Email уже существует"}, 409)
+                    return make_response({"error": "Пользователь с этим Email уже существует"}, 409)
                 else:
-                    return make_response({"reg_error": "Необработанная ошибка"}, 400)
+                    return make_response({"error": "Необработанная ошибка"}, 400)
         except Exception as e:
-            return make_response({"validate_error": str(e)}, 400)
+            return make_response({"error": str(e)}, 400)
 
 
 class UsersLogin(Resource):
@@ -54,24 +57,100 @@ class UsersLogin(Resource):
         user_email = args["email"]
         user_password = args["password"]
 
+        def generate_jwt(user_id, email):
+            payload = {
+                "user_id": user_id,
+                "email": email,
+                "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1)
+            }
+            encoded_jwt = jwt.encode(payload, secret_key, algorithm="HS256")
+            return encoded_jwt
+
         try:
             cursor = conn.cursor()
-            cursor.execute(f"SELECT email, password FROM users WHERE email = '{user_email}'")
-            user_db = cursor.fetchone()
+            cursor.execute(f"SELECT id, email, password FROM users WHERE email = '{user_email}'")
+            user_data = cursor.fetchone()
             cursor.close()
-            if user_db is None:
-                return make_response({"login_error": "Пользователя с таким Email не существует"}, 409)
+
+            if user_data is None:
+                return make_response({"error": "Пользователя с таким Email не существует"}, 409)
             else:
-                if user_password == user_db[1]:
-                    return make_response({"login_OK": "Пользователь успешно вошел"}, 200)
+                user_id, email, password = user_data
+                if user_password == password:
+                    token = generate_jwt(user_id, email)
+                    try:
+                        cursor = conn.cursor()
+                        insert_query = """
+                                    INSERT INTO sessions (user_id, token, login_date)
+                                    VALUES (%s, %s, NOW())
+                                """
+                        cursor.execute(insert_query, (user_id, token))
+                        conn.commit()
+                        cursor.close()
+                        return make_response({"token": token}, 200)
+                    except Exception as e:
+                        return make_response({"error": str(e)}, 400)
                 else:
-                    return make_response({"login_error": "Неверный логин или пароль"}, 401)
+                    return make_response({"error": "Неверный логин или пароль"}, 401)
         except Exception as e:
-            return make_response({"login_error": str(e)}, 400)
+            return make_response({"error": str(e)}, 400)
+
+
+# class UsersFullRegistration(Resource):
+#     def get(self):
+#         try:
+#             user_email = request.args.get('email')
+#             cursor = conn.cursor()
+#             cursor.execute(f"SELECT fullreg FROM users WHERE email = '{user_email}'")
+#             full_user_db = cursor.fetchone()
+#             user_full = full_user_db[0]
+#             cursor.close()
+#             if not user_full:
+#                 return make_response({"OK": "Пользователь зарегистрирован не полностью"}, 409)
+#             elif user_full:
+#                 return make_response({"OK": "Пользователь зарегистрирован полностью"}, 200)
+#             else:
+#                 return make_response({"error": str(user_full)}, 400)
+#         except Exception as e:
+#             return make_response({"error": str(e)}, 400)
+
+
+class CheckSession(Resource):
+
+    def get(self):
+
+        def check_session(token):
+            try:
+                cursor = conn.cursor()
+                query = """
+                    SELECT * FROM sessions
+                    WHERE token = %s AND out_date IS NULL
+                """
+                cursor.execute(query, (token,))
+                session = cursor.fetchone()
+                cursor.close()
+                return session is not None
+            except Exception as e:
+                return False
+
+        token = request.headers.get('Authorization')
+        if not token:
+            return make_response({"message": "Token not provided"}, 401)
+        else:
+            try:
+                token = token.split(" ")[1]
+                if check_session(token):
+                    return make_response({"message": "Session is valid"}, 200)
+                else:
+                    return make_response({"message": "Session is invalid or expired"}, 401)
+            except Exception as e:
+                return make_response({"error": str(e)}, 400)
 
 
 api.add_resource(UsersRegistration, "/api/v1/users/reg")
 api.add_resource(UsersLogin, "/api/v1/users/log")
+# api.add_resource(UsersFullRegistration, "/api/v1/users/fullreg")
+api.add_resource(CheckSession, "/api/v1/sessions/check")
 api.init_app(app)
 
 if __name__ == '__main__':
