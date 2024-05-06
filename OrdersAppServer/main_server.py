@@ -61,7 +61,7 @@ class UsersLogin(Resource):
             payload = {
                 "user_id": user_id,
                 "email": email,
-                "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1)
+                "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30)
             }
             encoded_jwt = jwt.encode(payload, secret_key, algorithm="HS256")
             return encoded_jwt
@@ -78,6 +78,20 @@ class UsersLogin(Resource):
                 user_id, email, password = user_data
                 if user_password == password:
                     token = generate_jwt(user_id, email)
+
+                    try:
+                        cursor = conn.cursor()
+                        update_query = """
+                                                UPDATE sessions
+                                                SET out_date = CURRENT_TIMESTAMP
+                                                WHERE user_id = %s AND out_date IS NULL AND token != %s
+                                            """
+                        cursor.execute(update_query,(user_id, token))
+                        conn.commit()
+                        cursor.close()
+                    except Exception as e:
+                        return make_response({"error": f"Ошибка при завершении предыдущих сессий: {e}"}, 400)
+
                     try:
                         cursor = conn.cursor()
                         insert_query = """
@@ -94,25 +108,6 @@ class UsersLogin(Resource):
                     return make_response({"error": "Неверный логин или пароль"}, 401)
         except Exception as e:
             return make_response({"error": str(e)}, 400)
-
-
-# class UsersFullRegistration(Resource):
-#     def get(self):
-#         try:
-#             user_email = request.args.get('email')
-#             cursor = conn.cursor()
-#             cursor.execute(f"SELECT fullreg FROM users WHERE email = '{user_email}'")
-#             full_user_db = cursor.fetchone()
-#             user_full = full_user_db[0]
-#             cursor.close()
-#             if not user_full:
-#                 return make_response({"OK": "Пользователь зарегистрирован не полностью"}, 409)
-#             elif user_full:
-#                 return make_response({"OK": "Пользователь зарегистрирован полностью"}, 200)
-#             else:
-#                 return make_response({"error": str(user_full)}, 400)
-#         except Exception as e:
-#             return make_response({"error": str(e)}, 400)
 
 
 class CheckSession(Resource):
@@ -146,11 +141,18 @@ class CheckSession(Resource):
             except Exception as e:
                 return make_response({"error": str(e)}, 400)
 
+class CheckConnection(Resource):
+    def head(self):
+        try:
+            return make_response({"message": "Сервер доступен"}, 200)
+        except Exception as e:
+            return make_response({"error": str(e)}, 500)
+
 
 api.add_resource(UsersRegistration, "/api/v1/users/reg")
 api.add_resource(UsersLogin, "/api/v1/users/log")
-# api.add_resource(UsersFullRegistration, "/api/v1/users/fullreg")
 api.add_resource(CheckSession, "/api/v1/sessions/check")
+api.add_resource(CheckConnection, "/api/v1/connection/check")
 api.init_app(app)
 
 if __name__ == '__main__':
