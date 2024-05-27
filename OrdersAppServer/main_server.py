@@ -50,14 +50,14 @@ class UsersProfileData(Resource):
         parser = reqparse.RequestParser()
         parser.add_argument("profileNameDB", type=str, dest='company_name')
         parser.add_argument("profilePhoneDB", type=str, dest='phone_num')
-        parser.add_argument("profileINNDB", type=str, dest='inn')
         parser.add_argument("profileRegionDB", type=str, dest='region')
         parser.add_argument("profileCityDB", type=str, dest='city')
         parser.add_argument("profileSpecializationDB", type=str, dest='category')
         args = parser.parse_args()
 
-        # Удаляем аргументы с пустыми значениями
-        args = {k: v for k, v in args.items() if v is not None}
+        for key, value in args.items():
+            if value == "":
+                args[key] = None
 
         token = request.headers.get('Authorization')
 
@@ -66,6 +66,11 @@ class UsersProfileData(Resource):
 
         try:
             token = token.split(" ")[1]
+
+            # Проверяем сессию перед выполнением запроса
+            if not self.check_valid_session(token):
+                return make_response({"message": "Session is invalid or expired"}, 401)
+
             payload = jwt.decode(token, secret_key, algorithms=["HS256"])
             user_id = payload['user_id']
 
@@ -99,12 +104,16 @@ class UsersProfileData(Resource):
 
         try:
             token = token.split(" ")[1]
+            # Проверяем сессию перед выполнением запроса
+            if not self.check_valid_session(token):
+                return make_response({"message": "Session is invalid or expired"}, 401)
+
             payload = jwt.decode(token, secret_key, algorithms=["HS256"])
             user_id = payload['user_id']
 
             cursor = conn.cursor()
             select_query = """
-                SELECT email, company_name, phone_num, inn, region, city, category
+                SELECT email, company_name, phone_num, region, city, category
                 FROM users
                 WHERE id = %s
             """
@@ -113,12 +122,11 @@ class UsersProfileData(Resource):
             cursor.close()
 
             if user_data:
-                email, company_name, phone_num, inn, region, city, category = user_data
+                email, company_name, phone_num, region, city, category = user_data
                 return jsonify({
                     "email": email,
                     "company_name": company_name,
                     "phone_num": phone_num,
-                    "inn": inn,
                     "region": region,
                     "city": city,
                     "category": category
@@ -130,6 +138,20 @@ class UsersProfileData(Resource):
             return make_response({"message": "Invalid or expired token"}, 401)
         except Exception as e:
             return make_response({"error": str(e)}, 400)
+
+    def check_valid_session(self, token):
+        try:
+            cursor = conn.cursor()
+            query = """
+                SELECT * FROM sessions
+                WHERE token = %s AND out_date IS NULL
+            """
+            cursor.execute(query, (token,))
+            session = cursor.fetchone()
+            cursor.close()
+            return session is not None
+        except Exception as e:
+            return False
 
 class UsersLogin(Resource):
     def post(self):
@@ -263,12 +285,276 @@ class CheckConnection(Resource):
             return make_response({"error": str(e)}, 500)
 
 
+class NewOrders(Resource):
+    def post(self):
+        parser = reqparse.RequestParser()
+        parser.add_argument("name", type=str, required=True)
+        parser.add_argument("mainCategory", type=str, required=True)
+        parser.add_argument("subCategory", type=str, required=True)
+        parser.add_argument("date", type=int, required=True)
+        parser.add_argument("budget", type=int, required=True)
+        parser.add_argument("description", type=str)
+        args = parser.parse_args()
+
+        token = request.headers.get('Authorization')
+        if not token:
+            return make_response({"error": "Token not provided"}, 401)
+
+        try:
+            token = token.split(" ")[1]
+
+            if not self.check_valid_session(token):
+                return make_response({"message": "Session is invalid or expired"}, 401)
+
+            payload = jwt.decode(token, secret_key, algorithms=["HS256"])
+            user_id = payload['user_id']
+
+            cursor = conn.cursor()
+            insert_query = """
+                INSERT INTO orders (user_id, order_name, category, subcategory, order_deadline, order_budget, "order", order_create)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+            """
+            cursor.execute(insert_query, (user_id, args["name"], args["mainCategory"],
+                                         args["subCategory"], args["date"], args["budget"],
+                                         args["description"]))
+            conn.commit()
+            cursor.close()
+
+            return make_response({"message": "Заказ успешно создан"}, 201)
+
+        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+            return make_response({"error": "Invalid or expired token"}, 401)
+        except Exception as e:
+            return make_response({"error": str(e)}, 400)
+
+    def check_valid_session(self, token):
+        try:
+            cursor = conn.cursor()
+            query = """
+                SELECT * FROM sessions
+                WHERE token = %s AND out_date IS NULL
+            """
+            cursor.execute(query, (token,))
+            session = cursor.fetchone()
+            cursor.close()
+            return session is not None
+        except Exception as e:
+            return False
+
+class MyOrders(Resource):
+    def get(self):
+        token = request.headers.get('Authorization')
+
+        if not token:
+            return make_response({"message": "Token not provided"}, 401)
+
+        try:
+            token = token.split(" ")[1]
+            # Проверяем сессию перед выполнением запроса
+            if not self.check_valid_session(token):
+                return make_response({"message": "Session is invalid or expired"}, 401)
+
+            payload = jwt.decode(token, secret_key, algorithms=["HS256"])
+            user_id = payload['user_id']
+
+            cursor = conn.cursor()
+            select_query = """
+                SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, DATE(order_create) as date, order_region, order_city
+                FROM orders
+                WHERE user_id = %s AND order_close IS NULL
+            """
+            cursor.execute(select_query, (user_id,))
+            my_orders_data = cursor.fetchall()
+            cursor.close()
+
+            if my_orders_data:
+                orders = []
+                for order in my_orders_data:
+                    datetime_object = datetime.datetime.strptime(str(order[7]), "%Y-%m-%d")
+                    order_create_date = datetime_object.strftime("%d.%m.%Y")
+                    order_dict = {
+                        "id": order[0],
+                        "order_name": order[1],
+                        "order": order[2],
+                        "category": order[3],
+                        "subcategory": order[4],
+                        "order_deadline": order[5],
+                        "order_budget": order[6],
+                        "order_create": order_create_date,
+                        "order_region": order[8],
+                        "order_city": order[9]
+                    }
+                    orders.append(order_dict)
+
+                return jsonify({"orders": orders})
+            else:
+                return make_response({"error": "Orders not found"}, 404)
+
+        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+            return make_response({"error": "Invalid or expired token"}, 401)
+        except Exception as e:
+            return make_response({"error": str(e)}, 400)
+
+    def check_valid_session(self, token):
+        try:
+            cursor = conn.cursor()
+            query = """
+                SELECT * FROM sessions
+                WHERE token = %s AND out_date IS NULL
+            """
+            cursor.execute(query, (token,))
+            session = cursor.fetchone()
+            cursor.close()
+            return session is not None
+        except Exception as e:
+            return False
+
+class MyArchiveOrders(Resource):
+    def get(self):
+        token = request.headers.get('Authorization')
+
+        if not token:
+            return make_response({"message": "Token not provided"}, 401)
+
+        try:
+            token = token.split(" ")[1]
+            # Проверяем сессию перед выполнением запроса
+            if not self.check_valid_session(token):
+                return make_response({"message": "Session is invalid or expired"}, 401)
+
+            payload = jwt.decode(token, secret_key, algorithms=["HS256"])
+            user_id = payload['user_id']
+
+            cursor = conn.cursor()
+            select_query = """
+                SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, DATE(order_create) as date, order_region, order_city
+                FROM orders
+                WHERE user_id = %s AND order_close IS NOT NULL
+            """
+            cursor.execute(select_query, (user_id,))
+            my_orders_data = cursor.fetchall()
+            cursor.close()
+
+            if my_orders_data:
+                orders = []
+                for order in my_orders_data:
+                    datetime_object = datetime.datetime.strptime(str(order[7]), "%Y-%m-%d")
+                    order_create_date = datetime_object.strftime("%d.%m.%Y")
+                    order_dict = {
+                        "id": order[0],
+                        "order_name": order[1],
+                        "order": order[2],
+                        "category": order[3],
+                        "subcategory": order[4],
+                        "order_deadline": order[5],
+                        "order_budget": order[6],
+                        "order_create": order_create_date,
+                        "order_region": order[8],
+                        "order_city": order[9]
+                    }
+                    orders.append(order_dict)
+
+                return jsonify({"orders": orders})
+            else:
+                return make_response({"error": "Orders not found"}, 404)
+
+        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+            return make_response({"error": "Invalid or expired token"}, 401)
+        except Exception as e:
+            return make_response({"error": str(e)}, 400)
+
+    def check_valid_session(self, token):
+        try:
+            cursor = conn.cursor()
+            query = """
+                SELECT * FROM sessions
+                WHERE token = %s AND out_date IS NULL
+            """
+            cursor.execute(query, (token,))
+            session = cursor.fetchone()
+            cursor.close()
+            return session is not None
+        except Exception as e:
+            return False
+
+class Orders(Resource):
+    def get(self):
+        token = request.headers.get('Authorization')
+
+        if not token:
+            return make_response({"message": "Token not provided"}, 401)
+
+        try:
+            token = token.split(" ")[1]
+            # Проверяем сессию перед выполнением запроса
+            if not self.check_valid_session(token):
+                return make_response({"message": "Session is invalid or expired"}, 401)
+
+            payload = jwt.decode(token, secret_key, algorithms=["HS256"])
+            user_id = payload['user_id']
+
+            cursor = conn.cursor()
+            select_query = """
+                SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, DATE(order_create) as date, order_region, order_city
+                FROM orders WHERE order_close IS NULL
+            """
+            cursor.execute(select_query, (user_id,))
+            my_orders_data = cursor.fetchall()
+            cursor.close()
+
+            if my_orders_data:
+                orders = []
+                for order in my_orders_data:
+                    datetime_object = datetime.datetime.strptime(str(order[7]), "%Y-%m-%d")
+                    order_create_date = datetime_object.strftime("%d.%m.%Y")
+                    order_dict = {
+                        "id": order[0],
+                        "order_name": order[1],
+                        "order": order[2],
+                        "category": order[3],
+                        "subcategory": order[4],
+                        "order_deadline": order[5],
+                        "order_budget": order[6],
+                        "order_create": order_create_date,
+                        "order_region": order[8],
+                        "order_city": order[9]
+                    }
+                    orders.append(order_dict)
+
+                return jsonify({"orders": orders})
+            else:
+                return make_response({"message": "Orders not found"}, 404)
+
+        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+            return make_response({"message": "Invalid or expired token"}, 401)
+        except Exception as e:
+            return make_response({"error": str(e)}, 400)
+
+    def check_valid_session(self, token):
+        try:
+            cursor = conn.cursor()
+            query = """
+                SELECT * FROM sessions
+                WHERE token = %s AND out_date IS NULL
+            """
+            cursor.execute(query, (token,))
+            session = cursor.fetchone()
+            cursor.close()
+            return session is not None
+        except Exception as e:
+            return False
+
+
 api.add_resource(UsersRegistration, "/api/v1/users/reg")
 api.add_resource(UsersProfileData, "/api/v1/users/profile")
 api.add_resource(UsersLogin, "/api/v1/users/log")
 api.add_resource(UsersLogout, "/api/v1/users/logout")
 api.add_resource(CheckSession, "/api/v1/sessions/check")
 api.add_resource(CheckConnection, "/api/v1/connection/check")
+api.add_resource(NewOrders, "/api/v1/orders/create")
+api.add_resource(Orders, "/api/v1/orders/all")
+api.add_resource(MyOrders, "/api/v1/orders/myorders")
+api.add_resource(MyArchiveOrders, "/api/v1/orders/myarchiveorders")
 api.init_app(app)
 
 if __name__ == '__main__':
