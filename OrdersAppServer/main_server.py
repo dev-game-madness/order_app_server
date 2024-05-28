@@ -359,10 +359,9 @@ class MyOrders(Resource):
 
             cursor = conn.cursor()
             select_query = """
-                SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, DATE(order_create) as date, order_region, order_city
-                FROM orders
-                WHERE user_id = %s AND order_close IS NULL
-            """
+                            SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, TO_CHAR(order_create , 'DD.MM.YYYY HH:mm:SS'), order_region, order_city
+                            FROM orders WHERE user_id = %s AND order_close IS NULL
+                        """
             cursor.execute(select_query, (user_id,))
             my_orders_data = cursor.fetchall()
             cursor.close()
@@ -370,8 +369,6 @@ class MyOrders(Resource):
             if my_orders_data:
                 orders = []
                 for order in my_orders_data:
-                    datetime_object = datetime.datetime.strptime(str(order[7]), "%Y-%m-%d")
-                    order_create_date = datetime_object.strftime("%d.%m.%Y")
                     order_dict = {
                         "id": order[0],
                         "order_name": order[1],
@@ -380,7 +377,7 @@ class MyOrders(Resource):
                         "subcategory": order[4],
                         "order_deadline": order[5],
                         "order_budget": order[6],
-                        "order_create": order_create_date,
+                        "order_create": order[7],
                         "order_region": order[8],
                         "order_city": order[9]
                     }
@@ -427,10 +424,9 @@ class MyArchiveOrders(Resource):
 
             cursor = conn.cursor()
             select_query = """
-                SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, DATE(order_create) as date, order_region, order_city
-                FROM orders
-                WHERE user_id = %s AND order_close IS NOT NULL
-            """
+                            SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, TO_CHAR(order_create , 'DD.MM.YYYY HH:mm:SS'), order_region, order_city
+                            FROM orders WHERE user_id = %s AND order_close IS NOT NULL
+                        """
             cursor.execute(select_query, (user_id,))
             my_orders_data = cursor.fetchall()
             cursor.close()
@@ -438,8 +434,6 @@ class MyArchiveOrders(Resource):
             if my_orders_data:
                 orders = []
                 for order in my_orders_data:
-                    datetime_object = datetime.datetime.strptime(str(order[7]), "%Y-%m-%d")
-                    order_create_date = datetime_object.strftime("%d.%m.%Y")
                     order_dict = {
                         "id": order[0],
                         "order_name": order[1],
@@ -448,7 +442,7 @@ class MyArchiveOrders(Resource):
                         "subcategory": order[4],
                         "order_deadline": order[5],
                         "order_budget": order[6],
-                        "order_create": order_create_date,
+                        "order_create": order[7],
                         "order_region": order[8],
                         "order_city": order[9]
                     }
@@ -495,7 +489,7 @@ class Orders(Resource):
 
             cursor = conn.cursor()
             select_query = """
-                SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, DATE(order_create) as date, order_region, order_city
+                SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, TO_CHAR(order_create , 'DD.MM.YYYY HH:mm:SS'), order_region, order_city
                 FROM orders WHERE order_close IS NULL
             """
             cursor.execute(select_query, (user_id,))
@@ -505,8 +499,6 @@ class Orders(Resource):
             if my_orders_data:
                 orders = []
                 for order in my_orders_data:
-                    datetime_object = datetime.datetime.strptime(str(order[7]), "%Y-%m-%d")
-                    order_create_date = datetime_object.strftime("%d.%m.%Y")
                     order_dict = {
                         "id": order[0],
                         "order_name": order[1],
@@ -515,7 +507,7 @@ class Orders(Resource):
                         "subcategory": order[4],
                         "order_deadline": order[5],
                         "order_budget": order[6],
-                        "order_create": order_create_date,
+                        "order_create": order[7],
                         "order_region": order[8],
                         "order_city": order[9]
                     }
