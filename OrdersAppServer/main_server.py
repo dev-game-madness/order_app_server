@@ -187,24 +187,18 @@ class UsersLogin(Resource):
 
                     try:
                         cursor = conn.cursor()
-                        update_query = """
-                                                UPDATE sessions
-                                                SET out_date = CURRENT_TIMESTAMP
-                                                WHERE user_id = %s AND out_date IS NULL AND token != %s
-                                            """
-                        cursor.execute(update_query,(user_id, token))
-                        conn.commit()
-                        cursor.close()
-                    except Exception as e:
-                        return make_response({"error": f"Ошибка при завершении предыдущих сессий: {e}"}, 400)
-
-                    try:
-                        cursor = conn.cursor()
                         insert_query = """
                                     INSERT INTO sessions (user_id, token, login_date)
                                     VALUES (%s, %s, NOW())
                                 """
                         cursor.execute(insert_query, (user_id, token))
+                        conn.commit()
+                        update_query = """
+                                                                        UPDATE sessions
+                                                                        SET out_date = CURRENT_TIMESTAMP
+                                                                        WHERE user_id = %s AND out_date IS NULL AND token != %s
+                                                                    """
+                        cursor.execute(update_query, (user_id, token))
                         conn.commit()
                         cursor.close()
                         return make_response({"token": token}, 200)
