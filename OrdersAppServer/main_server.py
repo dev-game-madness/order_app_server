@@ -67,10 +67,6 @@ class UsersProfileData(Resource):
         try:
             token = token.split(" ")[1]
 
-            # Проверяем сессию перед выполнением запроса
-            if not self.check_valid_session(token):
-                return make_response({"message": "Session is invalid or expired"}, 401)
-
             payload = jwt.decode(token, secret_key, algorithms=["HS256"])
             user_id = payload['user_id']
 
@@ -104,9 +100,6 @@ class UsersProfileData(Resource):
 
         try:
             token = token.split(" ")[1]
-            # Проверяем сессию перед выполнением запроса
-            if not self.check_valid_session(token):
-                return make_response({"message": "Session is invalid or expired"}, 401)
 
             payload = jwt.decode(token, secret_key, algorithms=["HS256"])
             user_id = payload['user_id']
@@ -139,20 +132,6 @@ class UsersProfileData(Resource):
         except Exception as e:
             return make_response({"error": str(e)}, 400)
 
-    def check_valid_session(self, token):
-        try:
-            cursor = conn.cursor()
-            query = """
-                SELECT * FROM sessions
-                WHERE token = %s AND out_date IS NULL
-            """
-            cursor.execute(query, (token,))
-            session = cursor.fetchone()
-            cursor.close()
-            return session is not None
-        except Exception as e:
-            return False
-
 class UsersLogin(Resource):
     def post(self):
         parser = reqparse.RequestParser()
@@ -179,97 +158,39 @@ class UsersLogin(Resource):
             cursor.close()
 
             if user_data is None:
-                return make_response({"error": "Пользователя с таким Email не существует"}, 409)
+                return make_response({"error": "Пользователя с таким Email не существует"}, 404)
             else:
                 user_id, email, password = user_data
                 if user_password == password:
                     token = generate_jwt(user_id, email)
 
-                    try:
-                        cursor = conn.cursor()
-                        insert_query = """
-                                    INSERT INTO sessions (user_id, token, login_date)
-                                    VALUES (%s, %s, NOW())
-                                """
-                        cursor.execute(insert_query, (user_id, token))
-                        conn.commit()
-                        update_query = """
-                                                                        UPDATE sessions
-                                                                        SET out_date = CURRENT_TIMESTAMP
-                                                                        WHERE user_id = %s AND out_date IS NULL AND token != %s
-                                                                    """
-                        cursor.execute(update_query, (user_id, token))
-                        conn.commit()
-                        cursor.close()
-                        return make_response({"token": token}, 200)
-                    except Exception as e:
-                        return make_response({"error": str(e)}, 400)
+                    # try:
+                    #     cursor = conn.cursor()
+                    #     insert_query = """
+                    #                 INSERT INTO sessions (user_id, token, login_date)
+                    #                 VALUES (%s, %s, NOW())
+                    #             """
+                    #     cursor.execute(insert_query, (user_id, token))
+                    #     conn.commit()
+                    #     update_query = """
+                    #                                                     UPDATE sessions
+                    #                                                     SET out_date = CURRENT_TIMESTAMP
+                    #                                                     WHERE user_id = %s AND out_date IS NULL AND token != %s
+                    #                                                 """
+                    #     cursor.execute(update_query, (user_id, token))
+                    #     conn.commit()
+                    #     cursor.close()
+                    return make_response({"token": token}, 200)
                 else:
-                    return make_response({"error": "Неверный логин или пароль"}, 401)
+                    return make_response({"error": "Неверный логин или пароль"}, 409)
         except Exception as e:
+            print(e)
             return make_response({"error": str(e)}, 400)
 
 class CheckSession(Resource):
 
     def get(self):
-
-        def check_session(token):
-            try:
-                cursor = conn.cursor()
-                query = """
-                    SELECT * FROM sessions
-                    WHERE token = %s AND out_date IS NULL
-                """
-                cursor.execute(query, (token,))
-                session = cursor.fetchone()
-                cursor.close()
-                return session is not None
-            except Exception as e:
-                return False
-
-        token = request.headers.get('Authorization')
-        if not token:
-            return make_response({"message": "Token not provided"}, 401)
-        else:
-            try:
-                token = token.split(" ")[1]
-                if check_session(token):
-                    return make_response({"message": "Session is valid"}, 200)
-                else:
-                    return make_response({"message": "Session is invalid or expired"}, 401)
-            except Exception as e:
-                return make_response({"error": str(e)}, 400)
-
-class UsersLogout(Resource):
-
-    def put(self):
-
-        def close_session(token):
-            try:
-                cursor = conn.cursor()
-                query = """
-                    UPDATE sessions SET out_date = CURRENT_TIMESTAMP 
-                    WHERE token = %s 
-                    AND out_date IS NULL;
-                """
-                cursor.execute(query, (token,))
-                conn.commit()
-                cursor.close()
-            except Exception as e:
-                return False
-
-        token = request.headers.get('Authorization')
-        if not token:
-            return make_response({"message": "Невалидный токен"}, 401)
-        else:
-            try:
-                token = token.split(" ")[1]
-                if close_session(token):
-                    return make_response({"message": "Сессия завершена"}, 200)
-                else:
-                    return make_response({"message": "Сессия не завершена"}, 401)
-            except Exception as e:
-                return make_response({"error": str(e)}, 400)
+        return make_response({"message": "Session is valid"}, 200)
 
 class CheckConnection(Resource):
     def head(self):
@@ -287,6 +208,7 @@ class NewOrders(Resource):
         parser.add_argument("subCategory", type=str, required=True)
         parser.add_argument("date", type=int, required=True)
         parser.add_argument("budget", type=int, required=True)
+        parser.add_argument("address", type=str)
         parser.add_argument("description", type=str)
         args = parser.parse_args()
 
@@ -297,20 +219,17 @@ class NewOrders(Resource):
         try:
             token = token.split(" ")[1]
 
-            if not self.check_valid_session(token):
-                return make_response({"message": "Session is invalid or expired"}, 401)
-
             payload = jwt.decode(token, secret_key, algorithms=["HS256"])
             user_id = payload['user_id']
 
             cursor = conn.cursor()
             insert_query = """
-                INSERT INTO orders (user_id, order_name, category, subcategory, order_deadline, order_budget, "order", order_create)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                INSERT INTO orders (user_id, order_name, category, subcategory, order_deadline, order_budget, "order", order_create, order_address)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
             """
             cursor.execute(insert_query, (user_id, args["name"], args["mainCategory"],
                                          args["subCategory"], args["date"], args["budget"],
-                                         args["description"]))
+                                         args["description"], args["address"]))
             conn.commit()
             cursor.close()
 
@@ -319,21 +238,8 @@ class NewOrders(Resource):
         except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
             return make_response({"error": "Invalid or expired token"}, 401)
         except Exception as e:
+            print(e)
             return make_response({"error": str(e)}, 400)
-
-    def check_valid_session(self, token):
-        try:
-            cursor = conn.cursor()
-            query = """
-                SELECT * FROM sessions
-                WHERE token = %s AND out_date IS NULL
-            """
-            cursor.execute(query, (token,))
-            session = cursor.fetchone()
-            cursor.close()
-            return session is not None
-        except Exception as e:
-            return False
 
 class MyOrders(Resource):
     def get(self):
@@ -344,16 +250,13 @@ class MyOrders(Resource):
 
         try:
             token = token.split(" ")[1]
-            # Проверяем сессию перед выполнением запроса
-            if not self.check_valid_session(token):
-                return make_response({"message": "Session is invalid or expired"}, 401)
 
             payload = jwt.decode(token, secret_key, algorithms=["HS256"])
             user_id = payload['user_id']
 
             cursor = conn.cursor()
             select_query = """
-                            SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, TO_CHAR(order_create , 'DD.MM.YYYY HH:mm:SS'), order_region, order_city
+                            SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, TO_CHAR(order_create , 'DD.MM.YYYY HH24:MI:SS'), order_address
                             FROM orders WHERE user_id = %s AND order_close IS NULL
                         """
             cursor.execute(select_query, (user_id,))
@@ -372,8 +275,7 @@ class MyOrders(Resource):
                         "order_deadline": order[5],
                         "order_budget": order[6],
                         "order_create": order[7],
-                        "order_region": order[8],
-                        "order_city": order[9]
+                        "order_address": order[8]
                     }
                     orders.append(order_dict)
 
@@ -386,20 +288,6 @@ class MyOrders(Resource):
         except Exception as e:
             return make_response({"error": str(e)}, 400)
 
-    def check_valid_session(self, token):
-        try:
-            cursor = conn.cursor()
-            query = """
-                SELECT * FROM sessions
-                WHERE token = %s AND out_date IS NULL
-            """
-            cursor.execute(query, (token,))
-            session = cursor.fetchone()
-            cursor.close()
-            return session is not None
-        except Exception as e:
-            return False
-
 class MyArchiveOrders(Resource):
     def get(self):
         token = request.headers.get('Authorization')
@@ -409,16 +297,13 @@ class MyArchiveOrders(Resource):
 
         try:
             token = token.split(" ")[1]
-            # Проверяем сессию перед выполнением запроса
-            if not self.check_valid_session(token):
-                return make_response({"message": "Session is invalid or expired"}, 401)
 
             payload = jwt.decode(token, secret_key, algorithms=["HS256"])
             user_id = payload['user_id']
 
             cursor = conn.cursor()
             select_query = """
-                            SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, TO_CHAR(order_create , 'DD.MM.YYYY HH:mm:SS'), order_region, order_city
+                            SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, TO_CHAR(order_create , 'DD.MM.YYYY HH24:MI:SS'), order_address
                             FROM orders WHERE user_id = %s AND order_close IS NOT NULL
                         """
             cursor.execute(select_query, (user_id,))
@@ -437,8 +322,7 @@ class MyArchiveOrders(Resource):
                         "order_deadline": order[5],
                         "order_budget": order[6],
                         "order_create": order[7],
-                        "order_region": order[8],
-                        "order_city": order[9]
+                        "order_address": order[8]
                     }
                     orders.append(order_dict)
 
@@ -451,20 +335,6 @@ class MyArchiveOrders(Resource):
         except Exception as e:
             return make_response({"error": str(e)}, 400)
 
-    def check_valid_session(self, token):
-        try:
-            cursor = conn.cursor()
-            query = """
-                SELECT * FROM sessions
-                WHERE token = %s AND out_date IS NULL
-            """
-            cursor.execute(query, (token,))
-            session = cursor.fetchone()
-            cursor.close()
-            return session is not None
-        except Exception as e:
-            return False
-
 class Orders(Resource):
     def get(self):
         token = request.headers.get('Authorization')
@@ -474,16 +344,13 @@ class Orders(Resource):
 
         try:
             token = token.split(" ")[1]
-            # Проверяем сессию перед выполнением запроса
-            if not self.check_valid_session(token):
-                return make_response({"message": "Session is invalid or expired"}, 401)
 
             payload = jwt.decode(token, secret_key, algorithms=["HS256"])
             user_id = payload['user_id']
 
             cursor = conn.cursor()
             select_query = """
-                SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, TO_CHAR(order_create , 'DD.MM.YYYY HH:mm:SS'), order_region, order_city
+                SELECT id, order_name, "order", category, subcategory, order_deadline, order_budget, TO_CHAR(order_create , 'DD.MM.YYYY HH24:MI:SS'), order_address
                 FROM orders WHERE order_close IS NULL
             """
             cursor.execute(select_query, (user_id,))
@@ -502,8 +369,7 @@ class Orders(Resource):
                         "order_deadline": order[5],
                         "order_budget": order[6],
                         "order_create": order[7],
-                        "order_region": order[8],
-                        "order_city": order[9]
+                        "order_address": order[8]
                     }
                     orders.append(order_dict)
 
@@ -516,25 +382,10 @@ class Orders(Resource):
         except Exception as e:
             return make_response({"error": str(e)}, 400)
 
-    def check_valid_session(self, token):
-        try:
-            cursor = conn.cursor()
-            query = """
-                SELECT * FROM sessions
-                WHERE token = %s AND out_date IS NULL
-            """
-            cursor.execute(query, (token,))
-            session = cursor.fetchone()
-            cursor.close()
-            return session is not None
-        except Exception as e:
-            return False
-
 
 api.add_resource(UsersRegistration, "/api/v1/users/reg")
 api.add_resource(UsersProfileData, "/api/v1/users/profile")
 api.add_resource(UsersLogin, "/api/v1/users/log")
-api.add_resource(UsersLogout, "/api/v1/users/logout")
 api.add_resource(CheckSession, "/api/v1/sessions/check")
 api.add_resource(CheckConnection, "/api/v1/connection/check")
 api.add_resource(NewOrders, "/api/v1/orders/create")
@@ -544,4 +395,4 @@ api.add_resource(MyArchiveOrders, "/api/v1/orders/myarchiveorders")
 api.init_app(app)
 
 if __name__ == '__main__':
-    app.run(debug=True, host="192.168.1.104", port=5000)
+    app.run(debug=True, host="192.168.0.108", port=5000)
